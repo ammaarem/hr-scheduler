@@ -41,7 +41,7 @@ const BUILTIN_TPLS = [
   { id: "panel",     label: "Panel Interview",    icon: "👥", notes: "" },
 ];
 
-const defaultCandidate = () => ({ id: uid(), name: "", email: "", date: "", startTime: "", endTime: "", room: "", roomUrl: "" });
+const defaultCandidate = () => ({ id: uid(), name: "", email: "", date: "", startTime: "", endTime: "", showEndTimeInEmail: false, room: "", roomUrl: "" });
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -442,7 +442,19 @@ function CandidateCard({ c, idx, mode, onChange, onRemove, canRemove, conflictId
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Input label="Date" value={c.date} onChange={v => onChange("date", v)} type="date" style={{ maxWidth: 190 }} required />
         <Input label="Start Time" value={c.startTime} onChange={v => onChange("startTime", v)} type="time" style={{ maxWidth: 150 }} required />
-        <Input label="End Time (optional)" value={c.endTime} onChange={v => onChange("endTime", v)} type="time" style={{ maxWidth: 150 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 170 }}>
+          <Input label="End Time (optional)" value={c.endTime} onChange={v => { onChange("endTime", v); if (!v) onChange("showEndTimeInEmail", false); }} type="time" style={{ maxWidth: 170 }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: c.endTime ? C.textMuted : C.textDim, cursor: c.endTime ? "pointer" : "default", userSelect: "none", paddingLeft: 2 }}>
+            <input
+              type="checkbox"
+              checked={!!c.showEndTimeInEmail}
+              disabled={!c.endTime}
+              onChange={e => onChange("showEndTimeInEmail", e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: accentCol, cursor: c.endTime ? "pointer" : "not-allowed" }}
+            />
+            Show end time in email
+          </label>
+        </div>
         {mode === "physical" && (
           <LinkField
             label="Interview Location"
@@ -639,7 +651,7 @@ function buildEmails(c, { mode, role, interviewStage, companyName, interviewers 
     : locLabel;
   const date   = fmtDate(c.date)      || "[DD/MM/YYYY]";
   const time   = fmtTime(c.startTime) || "[HH:MM AM/PM]";
-  const timeEnd = c.endTime ? ` – ${fmtTime(c.endTime)}` : "";
+  const timeEnd = c.showEndTimeInEmail && c.endTime ? ` – ${fmtTime(c.endTime)}` : "";
   const pos    = role           || "[Applied Position Title]";
   const stage  = interviewStage || "[Interview Stage]";
   const co     = companyName    || "[Company Name]";
