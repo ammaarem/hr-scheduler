@@ -41,10 +41,32 @@ const BUILTIN_TPLS = [
   { id: "panel",     label: "Panel Interview",    icon: "👥", notes: "" },
 ];
 
-const defaultCandidate = () => ({ id: uid(), name: "", email: "", date: "", startTime: "", endTime: "", room: "" });
+const defaultCandidate = () => ({ id: uid(), name: "", email: "", date: "", startTime: "", endTime: "", room: "", roomUrl: "" });
 
-function captureFormConfig({ mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, cc, bcc }) {
-  return { mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, cc, bcc };
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function htmlLink(url, text) {
+  const u = (url || "").trim();
+  if (!u) return escapeHtml(text || "");
+  const t = (text || "").trim() || u;
+  return `<a href="${escapeHtml(u)}" style="color:#0072c6;">${escapeHtml(t)}</a>`;
+}
+
+function formatPanel(interviewers) {
+  const list = Array.isArray(interviewers)
+    ? interviewers.map(s => String(s).trim()).filter(Boolean)
+    : typeof interviewers === "string" && interviewers.trim()
+      ? [interviewers.trim()]
+      : [];
+  if (!list.length) return { html: escapeHtml("[Panel Members]"), plain: "[Panel Members]" };
+  const plain = list.join(", ");
+  return { html: list.map(escapeHtml).join(", "), plain };
+}
+
+function captureFormConfig({ mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, cc, bcc }) {
+  return { mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, cc, bcc };
 }
 
 function describeTemplateConfig(cfg) {
@@ -69,6 +91,11 @@ function fmtTime(t) {
   const [h, m] = t.split(":").map(Number);
   const ap = h >= 12 ? "PM" : "AM";
   return `${String(h % 12 || 12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ap}`;
+}
+function firstName(full) {
+  const t = (full || "").trim();
+  if (!t) return "[Candidate Name]";
+  return t.split(/\s+/)[0];
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -157,6 +184,18 @@ function Select({ label, value, onChange, options, style = {} }) {
   );
 }
 
+function LinkField({ label, url, onUrlChange, text, onTextChange, urlPlaceholder, textPlaceholder, urlCacheKey }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1, minWidth: 280 }}>
+      {label && <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, letterSpacing: 0.4 }}>{label}</label>}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Input label="URL" value={url} onChange={onUrlChange} placeholder={urlPlaceholder} type="url" cacheKey={urlCacheKey} />
+        <Input label="Link text" value={text} onChange={onTextChange} placeholder={textPlaceholder} />
+      </div>
+    </div>
+  );
+}
+
 function Textarea({ label, value, onChange, placeholder, minHeight = 90 }) {
   const [f, setF] = useState(false);
   return (
@@ -207,11 +246,12 @@ function TagInput({ label, values, onChange, placeholder, cacheKey }) {
           </span>
         ))}
         <input value={raw} placeholder={values.length ? "" : placeholder} onChange={e => setRaw(e.target.value)}
-          onFocus={onFocus} onBlur={() => setTimeout(() => setShowSug(false), 150)}
+          onFocus={onFocus}
+          onBlur={() => { setTimeout(() => setShowSug(false), 150); if (raw.trim()) add(raw.trim()); }}
           onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
           style={{ border: "none", background: "transparent", outline: "none", color: C.text, fontSize: 13, flex: 1, minWidth: 130, padding: "2px 3px", fontFamily: "Calibri, sans-serif" }} />
       </div>
-      <span style={{ fontSize: 11, color: C.textDim }}>Press Enter or comma to add</span>
+      <span style={{ fontSize: 11, color: C.textDim }}>Press Enter, comma, or click away to add</span>
       {showSug && suggestions.length > 0 && (
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, zIndex: 200, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", marginTop: 2 }}>
           {suggestions.map((s, i) => (
@@ -402,8 +442,19 @@ function CandidateCard({ c, idx, mode, onChange, onRemove, canRemove, conflictId
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Input label="Date" value={c.date} onChange={v => onChange("date", v)} type="date" style={{ maxWidth: 190 }} required />
         <Input label="Start Time" value={c.startTime} onChange={v => onChange("startTime", v)} type="time" style={{ maxWidth: 150 }} required />
-        <Input label="End Time" value={c.endTime} onChange={v => onChange("endTime", v)} type="time" style={{ maxWidth: 150 }} required />
-        {mode === "physical" && <Input label="Interview Location" value={c.room} onChange={v => onChange("room", v)} placeholder="e.g. 20th Floor, Cinnamon Life" cacheKey="cand_room" />}
+        <Input label="End Time (optional)" value={c.endTime} onChange={v => onChange("endTime", v)} type="time" style={{ maxWidth: 150 }} />
+        {mode === "physical" && (
+          <LinkField
+            label="Interview Location"
+            url={c.roomUrl || ""}
+            onUrlChange={v => onChange("roomUrl", v)}
+            text={c.room || ""}
+            onTextChange={v => onChange("room", v)}
+            urlPlaceholder="https://maps.google.com/..."
+            textPlaceholder="e.g. 20th Floor, Cinnamon Life"
+            urlCacheKey="cand_room_url"
+          />
+        )}
       </div>
     </div>
   );
@@ -515,7 +566,8 @@ function DispatchModal({ items, mode, onClose }) {
                   <div style={{ fontSize: 12, color: C.textDim, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.email}</div>
                 </div>
                 <div style={{ fontSize: 11, color: C.textDim, flexShrink: 0, textAlign: "right" }}>
-                  <div>{fmtDate(it.date)}</div><div>{fmtTime(it.startTime)}–{fmtTime(it.endTime)}</div>
+                  <div>{fmtDate(it.date)}</div>
+                  <div>{fmtTime(it.startTime)}{it.endTime ? `–${fmtTime(it.endTime)}` : ""}</div>
                 </div>
               </div>
             );
@@ -575,39 +627,50 @@ function DispatchModal({ items, mode, onClose }) {
 //   Wishing you the best: bold italic 14pt
 //   Candidate name in greeting: bold
 
-function buildEmails(c, { mode, role, interviewStage, companyName, interviewers, formLink, additionalNotes }) {
+function buildEmails(c, { mode, role, interviewStage, companyName, interviewers = [], formLink, formLinkText, additionalNotes }) {
   const cal    = "Calibri, 'Calibri Light', Arial, sans-serif";
-  const panel  = interviewers.length ? interviewers.join(", ") : "[Panel Members]";
-  const loc    = c.room || "[Interview Location]";
+  const panel  = formatPanel(interviewers);
+  const locLabel = (c.room || "").trim() || "[Interview Location]";
+  const locHtml  = (c.roomUrl || "").trim()
+    ? htmlLink(c.roomUrl, locLabel === "[Interview Location]" ? c.roomUrl : locLabel)
+    : escapeHtml(locLabel);
+  const locPlain = (c.roomUrl || "").trim()
+    ? `${locLabel === "[Interview Location]" ? c.roomUrl.trim() : locLabel} (${c.roomUrl.trim()})`
+    : locLabel;
   const date   = fmtDate(c.date)      || "[DD/MM/YYYY]";
   const time   = fmtTime(c.startTime) || "[HH:MM AM/PM]";
   const timeEnd = c.endTime ? ` – ${fmtTime(c.endTime)}` : "";
   const pos    = role           || "[Applied Position Title]";
   const stage  = interviewStage || "[Interview Stage]";
   const co     = companyName    || "[Company Name]";
-  const name   = c.name         || "[Candidate Name]";
+  const name          = c.name || "[Candidate Name]";
+  const greetingName  = firstName(c.name);
+
+  const formAnchor = (formLinkText || "").trim() || "Microsoft Form";
+  const fLinkHtml  = (formLink || "").trim()
+    ? htmlLink(formLink, formAnchor)
+    : escapeHtml("[Microsoft Form Link]");
+  const fLinkPlain = (formLink || "").trim()
+    ? `${formAnchor} (${formLink.trim()})`
+    : "[Microsoft Form Link]";
 
   // ── Subject ──
-  const subjectHtml = `Subject: ${stage} | <b>${pos}</b> – <b>${name}</b> | ${co}`;
+  const subjectHtml = `Subject: ${escapeHtml(stage)} | <b>${escapeHtml(pos)}</b> – <b>${escapeHtml(name)}</b> | ${escapeHtml(co)}`;
   const subjectPlain = `${stage} | ${pos} – ${name} | ${co}`;
 
   // ── Helpers ──
-  const row = (label, value) =>
-    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• <b>${label}</b>: ${value}</p>`;
+  const row = (label, valueHtml) =>
+    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• <b>${escapeHtml(label)}</b>: ${valueHtml}</p>`;
   const tip = (text) =>
-    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• ${text}</p>`;
+    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• ${escapeHtml(text)}</p>`;
 
   let bodyHtml = "";
   let bodyPlain = "";
 
   if (mode === "physical") {
-    const fLink = formLink
-      ? `<a href="${formLink}" style="color:#0072c6;">Microsoft Form</a>`
-      : "[Microsoft Form Link]";
-    const fLinkPlain = formLink || "[Microsoft Form Link]";
 
     bodyHtml = `
-<p style="font-family:${cal};font-size:11pt;">Dear <b>${name}</b>,</p>
+<p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
 <p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
 <p style="margin:4px 0;"> </p>
 ${row("Date", date)}
@@ -615,10 +678,10 @@ ${row("Time", time + timeEnd)}
 ${row("Position", pos)}
 ${row("Interview Stage", stage)}
 ${row("Interview Type", "Physical (In-Person)")}
-${row("Interview Location", loc)}
-${row("Interview Panel", panel)}
+${row("Interview Location", locHtml)}
+${row("Interview Panel", panel.html)}
 <p style="margin:16px 0 4px;font-family:${cal};font-size:13pt;font-weight:bold;">Pre-Interview Requirements</p>
-<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• Complete the ${fLink} at least one hour before your arrival.</p>
+<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• Complete the ${fLinkHtml} at least one hour before your arrival.</p>
 <p style="margin:4px 0;font-family:${cal};font-size:11pt;">• Bring your NIC and present it at the front desk for security clearance.</p>
 <p style="margin:16px 0 4px;font-family:${cal};font-size:11pt;">Here are some tips for you to make this interview a great experience,</p>
 ${tip("Please arrive at least 10 minutes early to allow time for security check-in and registration.")}
@@ -630,7 +693,7 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
 <p style="margin:20px 0 0;font-family:${cal};font-size:14pt;font-weight:bold;font-style:italic;">Wishing you the best for your interview!</p>`;
 
     bodyPlain = [
-      `Dear ${name},`,
+      `Dear ${greetingName},`,
       "",
       "Please find below the details for your interview:",
       "",
@@ -639,12 +702,12 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
       `- Position: ${pos}`,
       `- Interview Stage: ${stage}`,
       `- Interview Type: Physical (In-Person)`,
-      `- Interview Location: ${loc}`,
-      `- Interview Panel: ${panel}`,
+      `- Interview Location: ${locPlain}`,
+      `- Interview Panel: ${panel.plain}`,
       "",
       "Pre-Interview Requirements",
       "",
-      `- Complete the Microsoft Form at least one hour before your arrival: ${fLinkPlain}`,
+      `- Complete the ${fLinkPlain} at least one hour before your arrival.`,
       "- Bring your NIC and present it at the front desk for security clearance.",
       "",
       "Here are some tips for you to make this interview a great experience,",
@@ -663,7 +726,7 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
   } else {
     // Virtual
     bodyHtml = `
-<p style="font-family:${cal};font-size:11pt;">Dear <b>${name}</b>,</p>
+<p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
 <p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
 <p style="margin:4px 0;"> </p>
 ${row("Date", date)}
@@ -671,7 +734,7 @@ ${row("Time", time + timeEnd)}
 ${row("Position", pos)}
 ${row("Interview Stage", stage)}
 ${row("Interview Type", "Virtual – MS Teams")}
-${row("Interview Panel", panel)}
+${row("Interview Panel", panel.html)}
 <p style="margin:16px 0 4px;font-family:${cal};font-size:11pt;">Here are some tips for you to make this interview a great experience,</p>
 ${tip("Please join the interview on time. If you are unable to join on time, notify the recruiter in advance.")}
 ${tip("Ensure your internet connection, camera, and microphone are working properly before the interview.")}
@@ -683,7 +746,7 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
 <p style="margin:20px 0 0;font-family:${cal};font-size:14pt;font-weight:bold;font-style:italic;">Wishing you the best for your interview!</p>`;
 
     bodyPlain = [
-      `Dear ${name},`,
+      `Dear ${greetingName},`,
       "",
       "Please find below the details for your interview:",
       "",
@@ -692,7 +755,7 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
       `- Position: ${pos}`,
       `- Interview Stage: ${stage}`,
       `- Interview Type: Virtual – MS Teams`,
-      `- Interview Panel: ${panel}`,
+      `- Interview Panel: ${panel.plain}`,
       "",
       "Here are some tips for you to make this interview a great experience,",
       "",
@@ -721,7 +784,8 @@ export default function HRScheduler() {
   const [interviewStage, setStage]  = useState(cache.interviewStage || "");
   const [role, setRole]             = useState(cache.role || "");
   const [interviewers, setPanel]    = useState([]);
-  const [formLink, setFormLink]     = useState(cache.formLink || "");
+  const [formLink, setFormLink]         = useState(cache.formLink || "");
+  const [formLinkText, setFormLinkText] = useState(cache.formLinkText || "Microsoft Form");
   const [additionalNotes, setNotes] = useState("");
   const [templateId, setTplId]      = useState("general");
   const [cc, setCc]                 = useState([]);
@@ -740,7 +804,7 @@ export default function HRScheduler() {
   const [preview, setPreview]     = useState(null);
 
   const allTpls = [...builtins, ...customs];
-  const formConfig = () => captureFormConfig({ mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, cc, bcc });
+  const formConfig = () => captureFormConfig({ mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, cc, bcc });
   const canSaveTemplate = role.trim() && interviewStage.trim();
   const activeCustomTpl = customs.find(t => t.id === templateId);
 
@@ -748,24 +812,27 @@ export default function HRScheduler() {
   useEffect(() => { if (companyName)    patchCache({ companyName }); }, [companyName]);
   useEffect(() => { if (interviewStage) patchCache({ interviewStage }); }, [interviewStage]);
   useEffect(() => { if (role)           patchCache({ role }); }, [role]);
-  useEffect(() => { if (formLink)       patchCache({ formLink }); }, [formLink]);
+  useEffect(() => { if (formLink)     patchCache({ formLink }); }, [formLink]);
+  useEffect(() => { if (formLinkText) patchCache({ formLinkText }); }, [formLinkText]);
 
   // Auto-save draft
   useEffect(() => {
     const t = setTimeout(() => {
-      saveDraft({ mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, templateId, cc, bcc, candidates });
+      saveDraft({ mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, templateId, cc, bcc, candidates });
       setHasDraft(true);
     }, 800);
     return () => clearTimeout(t);
-  }, [mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, templateId, cc, bcc, candidates]);
+  }, [mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, templateId, cc, bcc, candidates]);
 
   // Conflict detection
   const conflictIds = new Set();
   for (let i = 0; i < candidates.length; i++) {
     for (let j = i + 1; j < candidates.length; j++) {
       const a = candidates[i], b = candidates[j];
-      if (a.date && b.date && a.date === b.date && a.startTime && a.endTime && b.startTime && b.endTime) {
-        if (a.startTime < b.endTime && b.startTime < a.endTime) { conflictIds.add(a.id); conflictIds.add(b.id); }
+      if (a.date && b.date && a.date === b.date && a.startTime && b.startTime) {
+        const aEnd = a.endTime || "23:59";
+        const bEnd = b.endTime || "23:59";
+        if (a.startTime < bEnd && b.startTime < aEnd) { conflictIds.add(a.id); conflictIds.add(b.id); }
       }
     }
   }
@@ -783,6 +850,7 @@ export default function HRScheduler() {
       setRole(tpl.config.role || "");
       setPanel(tpl.config.interviewers || []);
       setFormLink(tpl.config.formLink || "");
+      setFormLinkText(tpl.config.formLinkText || "Microsoft Form");
       setNotes(tpl.config.additionalNotes || tpl.notes || "");
       setCc(tpl.config.cc || []);
       setBcc(tpl.config.bcc || []);
@@ -820,23 +888,24 @@ export default function HRScheduler() {
     const d = loadDraft(); if (!d) return;
     setMode(d.mode || "physical"); setCompany(d.companyName || ""); setStage(d.interviewStage || "");
     setRole(d.role || ""); setPanel(d.interviewers || []); setFormLink(d.formLink || "");
+    setFormLinkText(d.formLinkText || "Microsoft Form");
     setNotes(d.additionalNotes || ""); setTplId(d.templateId || "general");
     setCc(d.cc || []); setBcc(d.bcc || []);
     setCands(d.candidates?.length ? d.candidates : [defaultCandidate()]);
   };
 
   const saveDraftNow = () => {
-    saveDraft({ mode, companyName, interviewStage, role, interviewers, formLink, additionalNotes, templateId, cc, bcc, candidates });
+    saveDraft({ mode, companyName, interviewStage, role, interviewers, formLink, formLinkText, additionalNotes, templateId, cc, bcc, candidates });
     setDS(true); setTimeout(() => setDS(false), 2000);
   };
 
   const clearAll = () => {
-    setMode("physical"); setCompany(""); setStage(""); setRole(""); setPanel([]); setFormLink(""); setNotes("");
+    setMode("physical"); setCompany(""); setStage(""); setRole(""); setPanel([]); setFormLink(""); setFormLinkText("Microsoft Form"); setNotes("");
     setTplId("general"); setCc([]); setBcc([]); setCands([defaultCandidate()]);
     localStorage.removeItem(DRAFT_KEY); setHasDraft(false);
   };
 
-  const params = { mode, role, interviewStage, companyName, interviewers, formLink, additionalNotes };
+  const params = { mode, role, interviewStage, companyName, interviewers, formLink, formLinkText, additionalNotes };
 
   const validate = () => {
     if (!role.trim())          return "Applied Position Title is required.";
@@ -845,8 +914,8 @@ export default function HRScheduler() {
       if (!c.name.trim())  return `Candidate ${candidates.indexOf(c)+1}: name required.`;
       if (!c.email.trim() || !c.email.includes("@")) return `${c.name}: valid email required.`;
       if (!c.date)         return `${c.name}: date required.`;
-      if (!c.startTime || !c.endTime) return `${c.name}: start and end times required.`;
-      if (c.startTime >= c.endTime)   return `${c.name}: end time must be after start time.`;
+      if (!c.startTime) return `${c.name || `Candidate ${candidates.indexOf(c) + 1}`}: start time required.`;
+      if (c.endTime && c.startTime >= c.endTime) return `${c.name || `Candidate ${candidates.indexOf(c) + 1}`}: end time must be after start time.`;
     }
     return null;
   };
@@ -921,7 +990,16 @@ export default function HRScheduler() {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
             <Input label="Company Name" value={companyName} onChange={setCompany} placeholder="e.g. Ceylon Cold Stores PLC" cacheKey="companyName" />
             {!isVirtual && (
-              <Input label="Microsoft Form Link (Pre-Interview)" value={formLink} onChange={setFormLink} placeholder="https://forms.office.com/..." cacheKey="formLink" />
+              <LinkField
+                label="Microsoft Form (Pre-Interview)"
+                url={formLink}
+                onUrlChange={setFormLink}
+                text={formLinkText}
+                onTextChange={setFormLinkText}
+                urlPlaceholder="https://forms.office.com/..."
+                textPlaceholder="Microsoft Form"
+                urlCacheKey="formLink"
+              />
             )}
           </div>
 
