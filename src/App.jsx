@@ -47,11 +47,32 @@ function escapeHtml(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function htmlLink(url, text) {
+// Word/Outlook font sizes: 2≈10pt, 3≈12pt, 4≈14pt — paired with inline pt for paste.
+const O = {
+  s11: "font-size:11.0pt;font-family:Calibri,sans-serif;mso-ansi-font-size:11.0pt;mso-bidi-font-size:11.0pt;",
+  s13b: "font-size:13.0pt;font-family:Calibri,sans-serif;mso-ansi-font-size:13.0pt;mso-bidi-font-size:13.0pt;font-weight:bold;",
+  s14bi: "font-size:14.0pt;font-family:Calibri,sans-serif;mso-ansi-font-size:14.0pt;mso-bidi-font-size:14.0pt;font-weight:bold;font-style:italic;",
+  f11: 3,
+  f13: 4,
+  f14: 5,
+};
+
+function outlookP(margin, style, html, wordSize) {
+  const fOpen = wordSize != null ? `<font face="Calibri" size="${wordSize}">` : "";
+  const fClose = wordSize != null ? "</font>" : "";
+  return `<p style="margin:${margin};line-height:1.5;${style}">${fOpen}${html}${fClose}</p>`;
+}
+
+function wrapClipboardHtml(fragment) {
+  return `<html xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"></head><body>${fragment}</body></html>`;
+}
+
+function htmlLink(url, text, linkStyle = O.s11, wordSize = O.f11) {
   const u = (url || "").trim();
   if (!u) return escapeHtml(text || "");
   const t = (text || "").trim() || u;
-  return `<a href="${escapeHtml(u)}" style="color:#0072c6;">${escapeHtml(t)}</a>`;
+  const fOpen = `<font face="Calibri" size="${wordSize}">`;
+  return `<a href="${escapeHtml(u)}" style="color:#0072c6;${linkStyle}">${fOpen}${escapeHtml(t)}</font></a>`;
 }
 
 function formatPanel(interviewers) {
@@ -98,12 +119,40 @@ function firstName(full) {
   return t.split(/\s+/)[0];
 }
 
-function wrapEmailHtml(inner) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:Calibri,'Calibri Light',Arial,sans-serif;font-size:11pt;color:#000000;line-height:1.5;margin:0;">${inner.trim()}</body></html>`;
+function copyViaRenderedHtml(bodyHtml) {
+  try {
+    const el = document.createElement("div");
+    el.contentEditable = "true";
+    el.setAttribute("aria-hidden", "true");
+    Object.assign(el.style, {
+      position: "fixed",
+      left: "-9999px",
+      top: "0",
+      width: "7.5in",
+      background: "#fff",
+      color: "#000",
+      fontFamily: "Calibri, sans-serif",
+      lineHeight: "1.5",
+    });
+    el.innerHTML = bodyHtml;
+    document.body.appendChild(el);
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    sel.removeAllRanges();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 async function copyEmailToClipboard(bodyHtml, bodyPlain) {
-  const html = wrapEmailHtml(bodyHtml);
+  if (copyViaRenderedHtml(bodyHtml)) return "rendered";
+  const html = wrapClipboardHtml(bodyHtml.trim());
   try {
     if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
       await navigator.clipboard.write([
@@ -209,13 +258,13 @@ function Select({ label, value, onChange, options, style = {} }) {
   );
 }
 
-function LinkField({ label, url, onUrlChange, text, onTextChange, urlPlaceholder, textPlaceholder, urlCacheKey }) {
+function LinkField({ label, url, onUrlChange, text, onTextChange, urlPlaceholder, textPlaceholder, urlCacheKey, textCacheKey }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1, minWidth: 280 }}>
       {label && <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, letterSpacing: 0.4 }}>{label}</label>}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <Input label="URL" value={url} onChange={onUrlChange} placeholder={urlPlaceholder} type="url" cacheKey={urlCacheKey} />
-        <Input label="Link text" value={text} onChange={onTextChange} placeholder={textPlaceholder} />
+        <Input label="Link text" value={text} onChange={onTextChange} placeholder={textPlaceholder} cacheKey={textCacheKey} />
       </div>
     </div>
   );
@@ -490,6 +539,7 @@ function CandidateCard({ c, idx, mode, onChange, onRemove, canRemove, conflictId
             urlPlaceholder="https://maps.google.com/..."
             textPlaceholder="e.g. 20th Floor, Cinnamon Life"
             urlCacheKey="cand_room_url"
+            textCacheKey="cand_room"
           />
         )}
       </div>
@@ -619,7 +669,7 @@ function DispatchModal({ items, mode, onClose }) {
           <div style={{ padding: "16px 26px 22px", borderTop: `1px solid ${C.border}`, background: C.surfaceAlt }}>
             {mode === "physical" && (
               <div style={{ padding: "10px 14px", background: C.outlookGlow, border: `1px solid ${C.outlook}33`, borderRadius: 8, fontSize: 12, color: "#4da6e8", marginBottom: 12, lineHeight: 1.6 }}>
-                <strong>ℹ️ How it works:</strong> The formatted invite (same as Preview) is copied to your clipboard and your default mail app opens with recipients and subject filled. Click in the message body and press <strong>Ctrl+V</strong> to paste formatting. Works best with Outlook desktop.
+                <strong>ℹ️ How it works:</strong> The formatted invite is copied (same as Preview) and your mail app opens with recipients and subject. Click in the body and press <strong>Ctrl+V</strong>. In <strong>new Outlook</strong>, use <strong>Paste → Keep source formatting</strong> if sizes look wrong.
               </div>
             )}
             {mode === "virtual" && (
@@ -675,7 +725,6 @@ function DispatchModal({ items, mode, onClose }) {
 //   Candidate name in greeting: bold
 
 function buildEmails(c, { mode, role, interviewStage, companyName, interviewers = [], formLink, formLinkText, additionalNotes }) {
-  const cal    = "Calibri, 'Calibri Light', Arial, sans-serif";
   const panel  = formatPanel(interviewers);
   const locLabel = (c.room || "").trim() || "[Interview Location]";
   const locHtml  = (c.roomUrl || "").trim()
@@ -705,11 +754,14 @@ function buildEmails(c, { mode, role, interviewStage, companyName, interviewers 
   const subjectHtml = `Subject: ${escapeHtml(stage)} | <b>${escapeHtml(pos)}</b> – <b>${escapeHtml(name)}</b> | ${escapeHtml(co)}`;
   const subjectPlain = `${stage} | ${pos} – ${name} | ${co}`;
 
-  // ── Helpers ──
+  // ── Helpers (sizes on inner spans so Outlook keeps 11 / 13 / 14 pt on paste) ──
   const row = (label, valueHtml) =>
-    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• <b>${escapeHtml(label)}</b>: ${valueHtml}</p>`;
+    outlookP("4pt 0", O.s11, `• <b>${escapeHtml(label)}</b>: ${valueHtml}`, O.f11);
   const tip = (text) =>
-    `<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• ${escapeHtml(text)}</p>`;
+    outlookP("4pt 0", O.s11, `• ${escapeHtml(text)}`, O.f11);
+  const notesHtml = additionalNotes
+    ? outlookP("16pt 0 0 0", O.s11, escapeHtml(additionalNotes).replace(/\n/g, "<br/>"), O.f11)
+    : "";
 
   let bodyHtml = "";
   let bodyPlain = "";
@@ -717,27 +769,26 @@ function buildEmails(c, { mode, role, interviewStage, companyName, interviewers 
   if (mode === "physical") {
 
     bodyHtml = `
-<p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
-<p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
-<p style="margin:4px 0;"> </p>
+${outlookP("0 0 4pt 0", O.s11, `Dear <b>${escapeHtml(greetingName)}</b>,`, O.f11)}
+${outlookP("0 0 4pt 0", O.s11, "Please find below the details for your interview:", O.f11)}
 ${row("Date", escapeHtml(date))}
 ${row("Time", escapeHtml(time + timeEnd))}
 ${row("Position", escapeHtml(pos))}
 ${row("Interview Stage", escapeHtml(stage))}
-${row("Interview Type", escapeHtml("Physical (In-Person)"))}
+${row("Interview Type", "Physical (In-Person)")}
 ${row("Interview Location", locHtml)}
 ${row("Interview Panel", panel.html)}
-<p style="margin:16px 0 4px;font-family:${cal};font-size:13pt;font-weight:bold;">Pre-Interview Requirements</p>
-<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• Complete the ${fLinkHtml} at least one hour before your arrival.</p>
-<p style="margin:4px 0;font-family:${cal};font-size:11pt;">• Bring your NIC and present it at the front desk for security clearance.</p>
-<p style="margin:16px 0 4px;font-family:${cal};font-size:11pt;">Here are some tips for you to make this interview a great experience,</p>
+${outlookP("16pt 0 4pt 0", O.s13b, "Pre-Interview Requirements", O.f13)}
+${outlookP("4pt 0", O.s11, `• Complete the ${fLinkHtml} at least one hour before your arrival.`, O.f11)}
+${outlookP("4pt 0", O.s11, "• Bring your NIC and present it at the front desk for security clearance.", O.f11)}
+${outlookP("16pt 0 4pt 0", O.s11, "Here are some tips for you to make this interview a great experience,", O.f11)}
 ${tip("Please arrive at least 10 minutes early to allow time for security check-in and registration.")}
 ${tip("Bring a printed copy of your CV, and any relevant documents (if requested).")}
 ${tip("Dress in formal business attire appropriate for a professional interview.")}
 ${tip("If you have trouble finding the location, contact the recruiter in advance for assistance.")}
 ${tip("If you are unable to attend or will be late, kindly inform the recruiter as soon as possible.")}
-${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt;">${additionalNotes.replace(/\n/g, "<br/>")}</p>` : ""}
-<p style="margin:20px 0 0;font-family:${cal};font-size:14pt;font-weight:bold;font-style:italic;">Wishing you the best for your interview!</p>`;
+${notesHtml}
+${outlookP("20pt 0 0 0", O.s14bi, "Wishing you the best for your interview!", O.f14)}`;
 
     bodyPlain = [
       `Dear ${greetingName},`,
@@ -773,24 +824,23 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
   } else {
     // Virtual
     bodyHtml = `
-<p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
-<p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
-<p style="margin:4px 0;"> </p>
+${outlookP("0 0 4pt 0", O.s11, `Dear <b>${escapeHtml(greetingName)}</b>,`, O.f11)}
+${outlookP("0 0 4pt 0", O.s11, "Please find below the details for your interview:", O.f11)}
 ${row("Date", escapeHtml(date))}
 ${row("Time", escapeHtml(time + timeEnd))}
 ${row("Position", escapeHtml(pos))}
 ${row("Interview Stage", escapeHtml(stage))}
-${row("Interview Type", escapeHtml("Virtual – MS Teams"))}
+${row("Interview Type", "Virtual – MS Teams")}
 ${row("Interview Panel", panel.html)}
-<p style="margin:16px 0 4px;font-family:${cal};font-size:11pt;">Here are some tips for you to make this interview a great experience,</p>
+${outlookP("16pt 0 4pt 0", O.s11, "Here are some tips for you to make this interview a great experience,", O.f11)}
 ${tip("Please join the interview on time. If you are unable to join on time, notify the recruiter in advance.")}
 ${tip("Ensure your internet connection, camera, and microphone are working properly before the interview.")}
 ${tip("Find a quiet and well-lit location with minimal distractions.")}
 ${tip("Keep your video turned on during the interview unless instructed otherwise.")}
 ${tip("Dress professionally as you would for an in-person interview.")}
 ${tip("If you face any technical difficulties, inform the recruiter immediately.")}
-${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt;">${additionalNotes.replace(/\n/g, "<br/>")}</p>` : ""}
-<p style="margin:20px 0 0;font-family:${cal};font-size:14pt;font-weight:bold;font-style:italic;">Wishing you the best for your interview!</p>`;
+${notesHtml}
+${outlookP("20pt 0 0 0", O.s14bi, "Wishing you the best for your interview!", O.f14)}`;
 
     bodyPlain = [
       `Dear ${greetingName},`,
@@ -1046,6 +1096,7 @@ export default function HRScheduler() {
                 urlPlaceholder="https://forms.office.com/..."
                 textPlaceholder="Microsoft Form"
                 urlCacheKey="formLink"
+                textCacheKey="formLinkText"
               />
             )}
           </div>
