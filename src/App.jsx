@@ -98,6 +98,31 @@ function firstName(full) {
   return t.split(/\s+/)[0];
 }
 
+function wrapEmailHtml(inner) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:Calibri,'Calibri Light',Arial,sans-serif;font-size:11pt;color:#000000;line-height:1.5;margin:0;">${inner.trim()}</body></html>`;
+}
+
+async function copyEmailToClipboard(bodyHtml, bodyPlain) {
+  const html = wrapEmailHtml(bodyHtml);
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([bodyPlain], { type: "text/plain" }),
+        }),
+      ]);
+      return "html";
+    }
+  } catch { /* fallback below */ }
+  try {
+    await navigator.clipboard.writeText(bodyPlain);
+    return "plain";
+  } catch {
+    return false;
+  }
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Icon = {
   Teams:    () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 4a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" fill="#6264a7"/><path d="M20 9h-7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2z" fill="#6264a7"/><circle cx="7" cy="8" r="2.5" fill="#8b8cc8"/><path d="M10 13H4a1.5 1.5 0 0 0-1.5 1.5v4A1.5 1.5 0 0 0 4 20h6a1.5 1.5 0 0 0 1.5-1.5V17" stroke="#8b8cc8" strokeWidth="1.2" fill="none"/></svg>,
@@ -479,7 +504,11 @@ function PreviewModal({ items, onClose }) {
   const [copied, setCopied] = useState(false);
   const total = items.length;
   const item = items[idx];
-  const copy = () => { navigator.clipboard.writeText(item.bodyPlain); setCopied(true); setTimeout(() => setCopied(false), 1600); };
+  const copy = async () => {
+    const ok = await copyEmailToClipboard(item.bodyHtml, item.bodyPlain);
+    setCopied(ok ? "html" : "plain");
+    setTimeout(() => setCopied(false), 1600);
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 650, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -496,7 +525,7 @@ function PreviewModal({ items, onClose }) {
                 <Btn variant="ghost" onClick={() => setIdx(i => Math.min(total - 1, i + 1))} disabled={idx === total - 1} style={{ padding: "7px 12px", fontSize: 12 }}>Next →</Btn>
               </>
             )}
-            <Btn variant="ghost" onClick={copy} style={{ fontSize: 12, padding: "7px 12px" }}><Icon.Copy />{copied ? "Copied!" : "Copy plain text"}</Btn>
+            <Btn variant="ghost" onClick={copy} style={{ fontSize: 12, padding: "7px 12px" }}><Icon.Copy />{copied ? "Copied!" : "Copy for Outlook"}</Btn>
             <Btn variant="subtle" onClick={onClose}><Icon.X /></Btn>
           </div>
         </div>
@@ -532,19 +561,20 @@ function DispatchModal({ items, mode, onClose }) {
   const modeCol  = mode === "virtual" ? C.teams : C.outlook;
   const modeGlow = mode === "virtual" ? C.teamsGlow : C.outlookGlow;
 
-  const openDraft = (idx) => {
+  const openDraft = async (idx) => {
     const it = items[idx];
+    const copied = await copyEmailToClipboard(it.bodyHtml, it.bodyPlain);
     if (mode === "physical") {
       const enc = (s) => encodeURIComponent(s).replace(/%0A/g, "%0D%0A");
       const cc  = it.cc.length  ? `&cc=${encodeURIComponent(it.cc.join(";"))}`  : "";
       const bcc = it.bcc.length ? `&bcc=${encodeURIComponent(it.bcc.join(";"))}` : "";
+      const body = copied === false ? `&body=${enc(it.bodyPlain)}` : "";
       window.location.href =
-        `mailto:${encodeURIComponent(it.email)}?subject=${enc(it.subjectPlain)}${cc}${bcc}&body=${enc(it.bodyPlain)}`;
+        `mailto:${encodeURIComponent(it.email)}?subject=${enc(it.subjectPlain)}${cc}${bcc}${body}`;
     } else {
-      navigator.clipboard.writeText(it.bodyPlain).catch(() => {});
-      setCopied(idx);
-      window.open("https://teams.microsoft.com/l/meeting/new", "_blank");
+      window.open("https://teams.microsoft.com/l/meeting/new", "_blank", "noopener,noreferrer");
     }
+    setCopied(idx);
     setOpened(prev => new Set([...prev, idx]));
   };
 
@@ -556,8 +586,8 @@ function DispatchModal({ items, mode, onClose }) {
             <div style={{ fontSize: 17, fontWeight: 700 }}>{allDone ? "✅ All Invites Dispatched" : mode === "virtual" ? "📅 Dispatching Teams Invites" : "📨 Dispatching Outlook Invites"}</div>
             <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>
               {allDone ? "All drafts opened — make sure you've sent each one." : mode === "virtual"
-                ? "The invite body is copied to clipboard — paste it into the Teams meeting description."
-                : "Open each Outlook draft, review, then send."}
+                ? "Formatted invite copied — paste into the Teams meeting description (Ctrl+V)."
+                : "Formatted body copied and your mail app opens with To, CC, BCC, and subject — paste the body (Ctrl+V)."}
             </div>
           </div>
           <Btn variant="subtle" onClick={onClose}><Icon.X /></Btn>
@@ -587,21 +617,26 @@ function DispatchModal({ items, mode, onClose }) {
         </div>
         {!allDone && item && (
           <div style={{ padding: "16px 26px 22px", borderTop: `1px solid ${C.border}`, background: C.surfaceAlt }}>
+            {mode === "physical" && (
+              <div style={{ padding: "10px 14px", background: C.outlookGlow, border: `1px solid ${C.outlook}33`, borderRadius: 8, fontSize: 12, color: "#4da6e8", marginBottom: 12, lineHeight: 1.6 }}>
+                <strong>ℹ️ How it works:</strong> The formatted invite (same as Preview) is copied to your clipboard and your default mail app opens with recipients and subject filled. Click in the message body and press <strong>Ctrl+V</strong> to paste formatting. Works best with Outlook desktop.
+              </div>
+            )}
             {mode === "virtual" && (
               <div style={{ padding: "10px 14px", background: C.teamsGlow, border: `1px solid ${C.teams}33`, borderRadius: 8, fontSize: 12, color: "#8b8cc8", marginBottom: 12, lineHeight: 1.6 }}>
-                <strong>ℹ️ Teams limitation:</strong> Microsoft does not allow pre-filling a Teams meeting via URL — this is a platform restriction. Clicking below copies the full invite body to your clipboard and opens Teams new meeting. Paste the body into the description, set the title and time, add the attendee's email, then send.
+                <strong>ℹ️ Teams limitation:</strong> Microsoft does not allow pre-filling a Teams meeting via URL. Clicking below copies the formatted invite (same as Preview) and opens a new Teams meeting. Paste into the description with Ctrl+V, set the title and time, add the attendee, then send.
               </div>
             )}
             <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
               <strong style={{ color: C.text }}>Step {current + 1} of {total}:</strong>{" "}
               {mode === "virtual"
-                ? <>Clipboard copy + open Teams for <strong style={{ color: C.text }}>{item.name}</strong>. Paste body into meeting description.</>
-                : <>Pre-filled Outlook draft for <strong style={{ color: C.text }}>{item.name}</strong>. Review and send.</>}
+                ? <>Copy formatted body + open Teams for <strong style={{ color: C.text }}>{item.name}</strong>. Paste into the meeting description (Ctrl+V).</>
+                : <>Copy formatted invite and open mail for <strong style={{ color: C.text }}>{item.name}</strong> — paste into the body (Ctrl+V).</>}
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <Btn variant="primary" color={modeCol} onClick={() => openDraft(current)} style={{ flex: 1, justifyContent: "center", padding: "11px 0", fontSize: 14, boxShadow: `0 4px 16px ${modeGlow}` }}>
                 {mode === "virtual" ? <Icon.Teams /> : <Icon.Outlook />}
-                {mode === "virtual" ? `Copy Body & Open Teams for ${item.name}` : `Open in Outlook for ${item.name}`}
+                {mode === "virtual" ? `Copy & Open Teams for ${item.name}` : `Open Mail for ${item.name}`}
               </Btn>
               {opened.has(current) && current < total - 1 && (
                 <Btn variant="ghost" onClick={() => setCurrent(c => c + 1)} style={{ padding: "11px 18px", fontSize: 13 }}>Next →</Btn>
@@ -609,7 +644,7 @@ function DispatchModal({ items, mode, onClose }) {
             </div>
             {opened.has(current) && (
               <div style={{ fontSize: 11, color: C.success, marginTop: 10, display: "flex", alignItems: "center", gap: 5 }}>
-                <Icon.Check /> {mode === "virtual" ? "Body copied & Teams opened — paste into meeting description." : "Draft opened — send it in Outlook."}{" "}
+                <Icon.Check /> {mode === "virtual" ? "Formatted body copied — paste into Teams (Ctrl+V)." : "Body copied — paste into the mail draft (Ctrl+V), then send."}{" "}
                 {current < total - 1 ? "Then click Next." : "You're all done!"}
               </div>
             )}
@@ -685,11 +720,11 @@ function buildEmails(c, { mode, role, interviewStage, companyName, interviewers 
 <p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
 <p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
 <p style="margin:4px 0;"> </p>
-${row("Date", date)}
-${row("Time", time + timeEnd)}
-${row("Position", pos)}
-${row("Interview Stage", stage)}
-${row("Interview Type", "Physical (In-Person)")}
+${row("Date", escapeHtml(date))}
+${row("Time", escapeHtml(time + timeEnd))}
+${row("Position", escapeHtml(pos))}
+${row("Interview Stage", escapeHtml(stage))}
+${row("Interview Type", escapeHtml("Physical (In-Person)"))}
 ${row("Interview Location", locHtml)}
 ${row("Interview Panel", panel.html)}
 <p style="margin:16px 0 4px;font-family:${cal};font-size:13pt;font-weight:bold;">Pre-Interview Requirements</p>
@@ -741,11 +776,11 @@ ${additionalNotes ? `<p style="margin:16px 0 0;font-family:${cal};font-size:11pt
 <p style="font-family:${cal};font-size:11pt;">Dear <b>${escapeHtml(greetingName)}</b>,</p>
 <p style="font-family:${cal};font-size:11pt;">Please find below the details for your interview:</p>
 <p style="margin:4px 0;"> </p>
-${row("Date", date)}
-${row("Time", time + timeEnd)}
-${row("Position", pos)}
-${row("Interview Stage", stage)}
-${row("Interview Type", "Virtual – MS Teams")}
+${row("Date", escapeHtml(date))}
+${row("Time", escapeHtml(time + timeEnd))}
+${row("Position", escapeHtml(pos))}
+${row("Interview Stage", escapeHtml(stage))}
+${row("Interview Type", escapeHtml("Virtual – MS Teams"))}
 ${row("Interview Panel", panel.html)}
 <p style="margin:16px 0 4px;font-family:${cal};font-size:11pt;">Here are some tips for you to make this interview a great experience,</p>
 ${tip("Please join the interview on time. If you are unable to join on time, notify the recruiter in advance.")}
@@ -945,8 +980,8 @@ export default function HRScheduler() {
   const handleSend = () => {
     const err = validate(); if (err) { alert(err); return; }
     const items = candidates.map(c => {
-      const { subjectPlain, bodyPlain } = buildEmails(c, params);
-      return { name: c.name, email: c.email, date: c.date, startTime: c.startTime, endTime: c.endTime, cc, bcc, subjectPlain, bodyPlain };
+      const { subjectPlain, bodyHtml, bodyPlain } = buildEmails(c, params);
+      return { name: c.name, email: c.email, date: c.date, startTime: c.startTime, endTime: c.endTime, cc, bcc, subjectPlain, bodyHtml, bodyPlain };
     });
     setSentLog(items);
   };
